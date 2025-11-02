@@ -1,36 +1,18 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { hashString } from '../utils/crypto';
+import * as api from '../utils/api';
 import { EyeIcon, EyeSlashIcon, UserIcon } from './Icons';
-
-// --- Local Storage Helpers ---
-const getUsers = (): User[] => {
-    try {
-        const users = localStorage.getItem('debtBookUsers');
-        return users ? JSON.parse(users) : [];
-    } catch (error) {
-        console.error("Failed to parse users from local storage", error);
-        return [];
-    }
-};
-
-const saveUsers = (users: User[]) => {
-    try {
-        localStorage.setItem('debtBookUsers', JSON.stringify(users));
-    } catch (error) {
-        console.error("Failed to save users to local storage", error);
-    }
-};
 
 // --- Main Auth Component ---
 interface AuthProps {
-    onLoginSuccess: (username: string) => void;
+    onLoginSuccess: (token: string, username: string) => void;
 }
 
 const Auth: React.FC<AuthProps> = ({ onLoginSuccess }) => {
     const [mode, setMode] = useState<'login' | 'register' | 'recover-step-1' | 'recover-step-2' | 'recover-step-3'>('login');
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
 
     // State for recovery process
     const [recoveryUser, setRecoveryUser] = useState<User | null>(null);
@@ -63,12 +45,16 @@ const Auth: React.FC<AuthProps> = ({ onLoginSuccess }) => {
             {error && <p className="text-sm text-center text-red-500 bg-red-100/50 dark:bg-red-900/20 p-3 rounded-md">{error}</p>}
             {success && <p className="text-sm text-center text-green-500 bg-green-100/50 dark:bg-green-900/20 p-3 rounded-md">{success}</p>}
 
-            {mode === 'login' && <LoginForm onLoginSuccess={onLoginSuccess} setError={setError} onSwitchToRegister={() => handleModeChange('register')} onSwitchToRecover={() => handleModeChange('recover-step-1')} />}
-            {mode === 'register' && <RegisterForm onRegisterSuccess={onLoginSuccess} setError={setError} onSwitchToLogin={() => handleModeChange('login')} />}
-            
-            {mode === 'recover-step-1' && <RecoverStep1 setRecoveryUser={setRecoveryUser} setMode={setMode} setError={setError} onSwitchToLogin={() => handleModeChange('login')} />}
-            {mode === 'recover-step-2' && recoveryUser && <RecoverStep2 recoveryUser={recoveryUser} setMode={setMode} setError={setError} onSwitchToLogin={() => handleModeChange('login')} />}
-            {mode === 'recover-step-3' && recoveryUser && <RecoverStep3 recoveryUser={recoveryUser} setSuccess={setSuccess} setMode={setMode} setError={setError} />}
+            {isLoading ? <div className="text-center">Loading...</div> : (
+                <>
+                    {mode === 'login' && <LoginForm onLoginSuccess={onLoginSuccess} setError={setError} setIsLoading={setIsLoading} onSwitchToRegister={() => handleModeChange('register')} onSwitchToRecover={() => handleModeChange('recover-step-1')} />}
+                    {mode === 'register' && <RegisterForm onRegisterSuccess={onLoginSuccess} setError={setError} setIsLoading={setIsLoading} onSwitchToLogin={() => handleModeChange('login')} />}
+                    
+                    {mode === 'recover-step-1' && <RecoverStep1 setRecoveryUser={setRecoveryUser} setMode={setMode} setError={setError} setIsLoading={setIsLoading} onSwitchToLogin={() => handleModeChange('login')} />}
+                    {mode === 'recover-step-2' && recoveryUser && <RecoverStep2 recoveryUser={recoveryUser} setMode={setMode} setError={setError} setIsLoading={setIsLoading} onSwitchToLogin={() => handleModeChange('login')} />}
+                    {mode === 'recover-step-3' && recoveryUser && <RecoverStep3 recoveryUser={recoveryUser} setSuccess={setSuccess} setMode={setMode} setError={setError} setIsLoading={setIsLoading} />}
+                </>
+            )}
         </div>
     );
 };
@@ -87,23 +73,22 @@ const PasswordInput: React.FC<{value: string, onChange: (e: React.ChangeEvent<HT
     );
 };
 
-const LoginForm: React.FC<{onLoginSuccess: (u:string)=>void, setError: (e:string)=>void, onSwitchToRegister: ()=>void, onSwitchToRecover: ()=>void}> = ({ onLoginSuccess, setError, onSwitchToRegister, onSwitchToRecover }) => {
+const LoginForm: React.FC<{onLoginSuccess: (t:string, u:string)=>void, setError: (e:string)=>void, setIsLoading: (l:boolean)=>void, onSwitchToRegister: ()=>void, onSwitchToRecover: ()=>void}> = ({ onLoginSuccess, setError, setIsLoading, onSwitchToRegister, onSwitchToRecover }) => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
-        const users = getUsers();
-        const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
-        if (!user) {
-            return setError("User not found.");
+        setIsLoading(true);
+        try {
+            const { token, username: loggedInUsername } = await api.login(username, password);
+            onLoginSuccess(token, loggedInUsername);
+        } catch (error: any) {
+            setError(error.message);
+        } finally {
+            setIsLoading(false);
         }
-        const passwordHash = await hashString(password);
-        if (user.passwordHash !== passwordHash) {
-            return setError("Incorrect password.");
-        }
-        onLoginSuccess(user.username);
     };
 
     return (
@@ -126,7 +111,7 @@ const LoginForm: React.FC<{onLoginSuccess: (u:string)=>void, setError: (e:string
     );
 };
 
-const RegisterForm: React.FC<{onRegisterSuccess: (u:string)=>void, setError: (e:string)=>void, onSwitchToLogin: ()=>void}> = ({ onRegisterSuccess, setError, onSwitchToLogin }) => {
+const RegisterForm: React.FC<{onRegisterSuccess: (t:string, u:string)=>void, setError: (e:string)=>void, setIsLoading: (l:boolean)=>void, onSwitchToLogin: ()=>void}> = ({ onRegisterSuccess, setError, setIsLoading, onSwitchToLogin }) => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -142,15 +127,15 @@ const RegisterForm: React.FC<{onRegisterSuccess: (u:string)=>void, setError: (e:
         if (password.length < 6) {
             return setError("Password must be at least 6 characters long.");
         }
-        const users = getUsers();
-        if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
-            return setError("Username is already taken.");
+        setIsLoading(true);
+        try {
+            const { token, username: newUsername } = await api.register({ username, password, recoveryQuestion, recoveryAnswer });
+            onRegisterSuccess(token, newUsername);
+        } catch (error: any) {
+            setError(error.message);
+        } finally {
+            setIsLoading(false);
         }
-        const passwordHash = await hashString(password);
-        const recoveryAnswerHash = await hashString(recoveryAnswer.toLowerCase());
-        const newUser: User = { username, passwordHash, recoveryQuestion, recoveryAnswerHash };
-        saveUsers([...users, newUser]);
-        onRegisterSuccess(username);
     };
 
     return (
@@ -168,18 +153,21 @@ const RegisterForm: React.FC<{onRegisterSuccess: (u:string)=>void, setError: (e:
     );
 };
 
-const RecoverStep1: React.FC<{setRecoveryUser: (u:User)=>void, setMode: (m:any)=>void, setError: (e:string)=>void, onSwitchToLogin: ()=>void}> = ({ setRecoveryUser, setMode, setError, onSwitchToLogin }) => {
+const RecoverStep1: React.FC<{setRecoveryUser: (u:User)=>void, setMode: (m:any)=>void, setError: (e:string)=>void, setIsLoading: (l:boolean)=>void, onSwitchToLogin: ()=>void}> = ({ setRecoveryUser, setMode, setError, setIsLoading, onSwitchToLogin }) => {
     const [username, setUsername] = useState('');
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
-        const users = getUsers();
-        const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
-        if (!user) {
-            return setError("User not found. Please check the username and try again.");
+        setIsLoading(true);
+        try {
+            const user = await api.findUserForRecovery(username);
+            setRecoveryUser(user);
+            setMode('recover-step-2');
+        } catch (error: any) {
+            setError(error.message);
+        } finally {
+            setIsLoading(false);
         }
-        setRecoveryUser(user);
-        setMode('recover-step-2');
     };
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -193,16 +181,20 @@ const RecoverStep1: React.FC<{setRecoveryUser: (u:User)=>void, setMode: (m:any)=
     );
 };
 
-const RecoverStep2: React.FC<{recoveryUser: User, setMode: (m:any)=>void, setError: (e:string)=>void, onSwitchToLogin: ()=>void}> = ({ recoveryUser, setMode, setError, onSwitchToLogin }) => {
+const RecoverStep2: React.FC<{recoveryUser: User, setMode: (m:any)=>void, setError: (e:string)=>void, setIsLoading: (l:boolean)=>void, onSwitchToLogin: ()=>void}> = ({ recoveryUser, setMode, setError, setIsLoading, onSwitchToLogin }) => {
     const [answer, setAnswer] = useState('');
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
-        const answerHash = await hashString(answer.toLowerCase());
-        if (answerHash !== recoveryUser.recoveryAnswerHash) {
-            return setError("The answer to your security question is incorrect.");
+        setIsLoading(true);
+        try {
+            await api.verifyRecoveryAnswer(recoveryUser.username, answer);
+            setMode('recover-step-3');
+        } catch (error: any) {
+            setError(error.message);
+        } finally {
+            setIsLoading(false);
         }
-        setMode('recover-step-3');
     };
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -219,7 +211,7 @@ const RecoverStep2: React.FC<{recoveryUser: User, setMode: (m:any)=>void, setErr
     );
 };
 
-const RecoverStep3: React.FC<{recoveryUser: User, setMode: (m:any)=>void, setError: (e:string)=>void, setSuccess: (s:string)=>void}> = ({ recoveryUser, setMode, setError, setSuccess }) => {
+const RecoverStep3: React.FC<{recoveryUser: User, setMode: (m:any)=>void, setError: (e:string)=>void, setSuccess: (s:string)=>void, setIsLoading: (l:boolean)=>void}> = ({ recoveryUser, setMode, setError, setSuccess, setIsLoading }) => {
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const handleSubmit = async (e: React.FormEvent) => {
@@ -231,15 +223,16 @@ const RecoverStep3: React.FC<{recoveryUser: User, setMode: (m:any)=>void, setErr
         if (newPassword.length < 6) {
             return setError("Password must be at least 6 characters long.");
         }
-        const users = getUsers();
-        // FIX: The original code used `await` inside a synchronous `.map()` callback, which is a syntax error.
-        // The async logic was also inefficient. It has been corrected to hash the password once
-        // and then synchronously update the user array.
-        const passwordHash = await hashString(newPassword);
-        const updatedUsers = users.map(u => u.username === recoveryUser.username ? { ...u, passwordHash: passwordHash } : u );
-        saveUsers(updatedUsers);
-        setSuccess("Your password has been successfully reset! Please log in.");
-        setMode('login');
+        setIsLoading(true);
+        try {
+            await api.resetPassword(recoveryUser.username, newPassword);
+            setSuccess("Your password has been successfully reset! Please log in.");
+            setMode('login');
+        } catch (error: any) {
+            setError(error.message);
+        } finally {
+            setIsLoading(false);
+        }
     };
     return (
         <form onSubmit={handleSubmit} className="space-y-4">

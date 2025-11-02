@@ -3,6 +3,7 @@ import { Customer, Transaction, User } from './types';
 import CustomerDetail from './components/CustomerDetail';
 import Dashboard from './components/Dashboard';
 import Auth from './components/Auth';
+import * as api from './utils/api';
 
 const EditProfileModal: React.FC<{
   currentUser: string;
@@ -142,136 +143,119 @@ const DeleteCustomerModal: React.FC<{
 const App: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(() => sessionStorage.getItem('authToken'));
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [customerToRename, setCustomerToRename] = useState<Customer | null>(null);
   const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-
-  // Check for logged in user on initial load
+  // Effect to derive user state from token and fetch initial data
   useEffect(() => {
-    try {
-      const loggedInUser = sessionStorage.getItem('debtBookCurrentUser');
-      if (loggedInUser) {
-        setCurrentUser(loggedInUser);
+    if (authToken) {
+      try {
+        const username = atob(authToken); // Simplified token decoding
+        setCurrentUser(username);
+        setIsLoading(true);
+        api.getCustomers(authToken)
+          .then(setCustomers)
+          .catch(err => {
+            console.error(err);
+            handleLogout(); // Log out if token is invalid
+          })
+          .finally(() => setIsLoading(false));
+      } catch (error) {
+        console.error("Invalid token", error);
+        handleLogout();
       }
-    } catch (error) {
-        console.error("Failed to check session storage", error);
+    } else {
+        setCurrentUser(null);
+        setCustomers([]);
+        setIsLoading(false);
     }
-  }, []);
+  }, [authToken]);
 
-  // Load customer data when user logs in
-  useEffect(() => {
-    if (!currentUser) {
-      setCustomers([]); // Clear data if no user is logged in
-      return;
-    }
-    try {
-      const storedCustomers = localStorage.getItem(`debtBookData_${currentUser}`);
-      if (storedCustomers) {
-        setCustomers(JSON.parse(storedCustomers));
-      } else {
-        setCustomers([]); // Start with empty list for new or empty users
-      }
-    } catch (error) {
-      console.error("Failed to load customers from local storage", error);
-    }
-  }, [currentUser]);
 
-  // Save customer data when it changes
-  useEffect(() => {
-    if (!currentUser) return;
-    try {
-      localStorage.setItem(`debtBookData_${currentUser}`, JSON.stringify(customers));
-    } catch (error) {
-      console.error("Failed to save customers to local storage", error);
-    }
-  }, [customers, currentUser]);
-
-  const handleLoginSuccess = useCallback((username: string) => {
+  const handleLoginSuccess = useCallback((token: string, username: string) => {
+    sessionStorage.setItem('authToken', token);
+    setAuthToken(token);
     setCurrentUser(username);
-    sessionStorage.setItem('debtBookCurrentUser', username);
   }, []);
 
   const handleLogout = useCallback(() => {
+    sessionStorage.removeItem('authToken');
+    setAuthToken(null);
     setCurrentUser(null);
     setSelectedCustomerId(null);
-    sessionStorage.removeItem('debtBookCurrentUser');
+    setCustomers([]);
   }, []);
 
   const handleUpdateUsername = async (newUsername: string): Promise<{ success: boolean; error?: string }> => {
+    if (!authToken) return { success: false, error: "Not authenticated" };
+    
     const trimmedUsername = newUsername.trim();
-    if (!currentUser) {
-        return { success: false, error: "No user is logged in." };
-    }
-    if (trimmedUsername.toLowerCase() === currentUser.toLowerCase()) {
+    if (trimmedUsername.toLowerCase() === currentUser?.toLowerCase()) {
         setIsEditingProfile(false);
-        return { success: true }; // No change needed
+        return { success: true };
     }
-    if (!trimmedUsername) {
-        return { success: false, error: "Username cannot be empty." };
-    }
+    if (!trimmedUsername) return { success: false, error: "Username cannot be empty." };
 
     try {
-        const usersJSON = localStorage.getItem('debtBookUsers');
-        const users: User[] = usersJSON ? JSON.parse(usersJSON) : [];
-
-        if (users.some(u => u.username.toLowerCase() === trimmedUsername.toLowerCase())) {
-            return { success: false, error: "This username is already taken." };
-        }
-
-        const oldUsername = currentUser;
-        const updatedUsers = users.map(u => u.username === oldUsername ? { ...u, username: trimmedUsername } : u);
-        
-        const customerData = localStorage.getItem(`debtBookData_${oldUsername}`);
-
-        // Perform the switch
-        localStorage.setItem('debtBookUsers', JSON.stringify(updatedUsers));
-        if (customerData) {
-            localStorage.setItem(`debtBookData_${trimmedUsername}`, customerData);
-            localStorage.removeItem(`debtBookData_${oldUsername}`);
-        }
-
-        // Update app state
-        setCurrentUser(trimmedUsername);
-        sessionStorage.setItem('debtBookCurrentUser', trimmedUsername);
-        setIsEditingProfile(false); // Close modal on success
-
+        const { newToken, newUsername: updatedUsername } = await api.updateUsername(authToken, trimmedUsername);
+        handleLoginSuccess(newToken, updatedUsername);
+        setIsEditingProfile(false);
         return { success: true };
-    } catch (error) {
-        console.error("Failed to update username:", error);
-        return { success: false, error: "An unexpected error occurred while updating." };
+    } catch (error: any) {
+        return { success: false, error: error.message };
     }
   };
 
-  const handleAddCustomer = useCallback((name: string) => {
-    const newCustomer: Customer = {
-      id: Date.now().toString(),
-      name,
-      transactions: [],
-    };
-    const updatedCustomers = [...customers, newCustomer];
-    setCustomers(updatedCustomers);
-    setSelectedCustomerId(newCustomer.id); // Select the new customer immediately
-  }, [customers]);
+  const handleAddCustomer = useCallback(async (name: string) => {
+    if (!authToken) return;
+    try {
+      const newCustomer = await api.addCustomer(authToken, name);
+      setCustomers(prev => [...prev, newCustomer]);
+      setSelectedCustomerId(newCustomer.id);
+    } catch (error) {
+      console.error("Failed to add customer:", error);
+      alert("Error: Could not add customer.");
+    }
+  }, [authToken]);
 
-  const handleRenameCustomer = useCallback((customerId: string, newName: string) => {
+  const handleRenameCustomer = useCallback(async (customerId: string, newName: string) => {
+    if (!authToken) return;
     setIsSaving(true);
-    setCustomers(prev =>
-      prev.map(c => (c.id === customerId ? { ...c, name: newName } : c))
-    );
-    setCustomerToRename(null);
-    setIsSaving(false);
-  }, []);
+    try {
+      await api.renameCustomer(authToken, customerId, newName);
+      setCustomers(prev =>
+        prev.map(c => (c.id === customerId ? { ...c, name: newName } : c))
+      );
+    } catch (error) {
+      console.error("Failed to rename customer:", error);
+      alert("Error: Could not rename customer.");
+    } finally {
+      setCustomerToRename(null);
+      setIsSaving(false);
+    }
+  }, [authToken]);
   
-  const handleDeleteCustomer = useCallback((customerId: string) => {
+  const handleDeleteCustomer = useCallback(async (customerId: string) => {
+    if (!authToken) return;
     setIsSaving(true);
-    setCustomers(prev => prev.filter(c => c.id !== customerId));
-    setSelectedCustomerId(null); // Go back to dashboard
-    setCustomerToDelete(null);
-    setIsSaving(false);
-  }, []);
+    try {
+      await api.deleteCustomer(authToken, customerId);
+      setCustomers(prev => prev.filter(c => c.id !== customerId));
+      setSelectedCustomerId(null);
+    } catch (error) {
+      console.error("Failed to delete customer:", error);
+      alert("Error: Could not delete customer.");
+    } finally {
+      setCustomerToDelete(null);
+      setIsSaving(false);
+    }
+  }, [authToken]);
 
   const handleSelectCustomer = useCallback((id: string) => {
     setSelectedCustomerId(id);
@@ -281,42 +265,45 @@ const App: React.FC = () => {
     setSelectedCustomerId(null);
   }, []);
 
-  const handleAddTransaction = useCallback((
-    customerId: string, 
-    productName: string, 
-    quantity: number,
-    price: number,
-    date: string
+  const handleAddTransaction = useCallback(async (
+    customerId: string, productName: string, quantity: number, price: number, date: string
   ) => {
-    const newTransaction: Transaction = {
-      id: Date.now().toString(),
-      productName,
-      quantity,
-      amount: price,
-      isPaid: false,
-      date: new Date(date + 'T00:00:00').toISOString(),
-    };
-    setCustomers(prev => prev.map(c =>
-      c.id === customerId
-        ? { ...c, transactions: [newTransaction, ...c.transactions] } // Add to the top
-        : c
-    ));
-  }, []);
+    if (!authToken) return;
+    try {
+      await api.addTransaction(authToken, customerId, { productName, quantity, price, date });
+      const updatedCustomers = await api.getCustomers(authToken); // Re-fetch for simplicity
+      setCustomers(updatedCustomers);
+    } catch (error) {
+      console.error("Failed to add transaction:", error);
+      alert("Error: Could not add transaction.");
+    }
+  }, [authToken]);
 
-  const handleToggleTransactionPaid = useCallback((customerId: string, transactionId: string) => {
-    setCustomers(prev => prev.map(c =>
-      c.id === customerId
-        ? {
-            ...c,
-            transactions: c.transactions.map(t =>
-              t.id === transactionId ? { ...t, isPaid: !t.isPaid } : t
-            ),
-          }
-        : c
-    ));
-  }, []);
+  const handleToggleTransactionPaid = useCallback(async (customerId: string, transactionId: string) => {
+    if (!authToken) return;
+    try {
+        await api.toggleTransactionPaid(authToken, customerId, transactionId);
+        setCustomers(prev => prev.map(c =>
+            c.id === customerId
+              ? {
+                  ...c,
+                  transactions: c.transactions.map(t =>
+                    t.id === transactionId ? { ...t, isPaid: !t.isPaid } : t
+                  ),
+                }
+              : c
+          ));
+    } catch (error) {
+        console.error("Failed to update transaction:", error);
+        alert("Error: Could not update transaction.");
+    }
+  }, [authToken]);
 
   const selectedCustomer = customers.find(c => c.id === selectedCustomerId) || null;
+  
+  if (isLoading) {
+    return <div className="h-screen w-screen bg-gray-100 dark:bg-gray-950 flex items-center justify-center"><p>Loading...</p></div>;
+  }
   
   if (!currentUser) {
     return (
