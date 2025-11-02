@@ -1,0 +1,5 @@
+{
+  "name": "Black Market",
+  "description": "A simple web application to manage customer debts. You can add customers, record their transactions, mark items as paid, and delete customer records. All data is saved in your browser's local storage.",
+  "requestFramePermissions": []
+}
