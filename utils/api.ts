@@ -198,8 +198,9 @@ export const addTransaction = async (token: string, customerId: string, txData: 
     const username = getUsernameFromToken(token);
     if (!username) throw new Error("Unauthorized");
     
-    const customer = db.customers[username].find(c => c.id === customerId);
-    if (!customer) throw new Error("Customer not found");
+    const customerIndex = db.customers[username].findIndex(c => c.id === customerId);
+    if (customerIndex === -1) throw new Error("Customer not found");
+    const customer = db.customers[username][customerIndex];
 
     const newTransaction: Transaction = {
         id: Date.now().toString(),
@@ -209,8 +210,10 @@ export const addTransaction = async (token: string, customerId: string, txData: 
         isPaid: false,
         date: new Date(txData.date + 'T00:00:00').toISOString(),
     };
+    
+    const updatedTransactions = [newTransaction, ...customer.transactions];
+    db.customers[username][customerIndex] = { ...customer, transactions: updatedTransactions };
 
-    customer.transactions.unshift(newTransaction);
     persistCustomers(username);
     return newTransaction;
 };
@@ -220,13 +223,41 @@ export const toggleTransactionPaid = async (token: string, customerId: string, t
     const username = getUsernameFromToken(token);
     if (!username) throw new Error("Unauthorized");
     
-    const customer = db.customers[username].find(c => c.id === customerId);
-    if (!customer) throw new Error("Customer not found");
+    const customerIndex = db.customers[username].findIndex(c => c.id === customerId);
+    if (customerIndex === -1) throw new Error("Customer not found");
+    const customer = db.customers[username][customerIndex];
 
-    const transaction = customer.transactions.find(t => t.id === transactionId);
-    if (!transaction) throw new Error("Transaction not found");
+    let updatedTransaction: Transaction | undefined;
+    const updatedTransactions = customer.transactions.map(t => {
+        if (t.id === transactionId) {
+            updatedTransaction = { ...t, isPaid: !t.isPaid };
+            return updatedTransaction;
+        }
+        return t;
+    });
+
+    if (!updatedTransaction) {
+        throw new Error("Transaction not found");
+    }
     
-    transaction.isPaid = !transaction.isPaid;
+    db.customers[username][customerIndex] = { ...customer, transactions: updatedTransactions };
     persistCustomers(username);
-    return transaction;
+    return updatedTransaction;
+};
+
+export const deleteTransaction = async (token: string, customerId: string, transactionId: string): Promise<void> => {
+    await randomDelay();
+    const username = getUsernameFromToken(token);
+    if (!username) throw new Error("Unauthorized");
+    
+    const customerIndex = db.customers[username].findIndex(c => c.id === customerId);
+    if (customerIndex === -1) throw new Error("Customer not found");
+    const customer = db.customers[username][customerIndex];
+
+    const transactionIndex = customer.transactions.findIndex(t => t.id === transactionId);
+    if (transactionIndex === -1) throw new Error("Transaction not found");
+
+    const updatedTransactions = customer.transactions.filter(t => t.id !== transactionId);
+    db.customers[username][customerIndex] = { ...customer, transactions: updatedTransactions };
+    persistCustomers(username);
 };

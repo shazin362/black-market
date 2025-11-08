@@ -283,19 +283,23 @@ const App: React.FC = () => {
     if (!authToken) return;
     try {
         await api.toggleTransactionPaid(authToken, customerId, transactionId);
-        setCustomers(prev => prev.map(c =>
-            c.id === customerId
-              ? {
-                  ...c,
-                  transactions: c.transactions.map(t =>
-                    t.id === transactionId ? { ...t, isPaid: !t.isPaid } : t
-                  ),
-                }
-              : c
-          ));
+        const updatedCustomers = await api.getCustomers(authToken);
+        setCustomers(updatedCustomers);
     } catch (error) {
         console.error("Failed to update transaction:", error);
         alert("Error: Could not update transaction.");
+    }
+  }, [authToken]);
+
+  const handleDeleteTransaction = useCallback(async (customerId: string, transactionId: string) => {
+    if (!authToken) return;
+    try {
+      await api.deleteTransaction(authToken, customerId, transactionId);
+      const updatedCustomers = await api.getCustomers(authToken);
+      setCustomers(updatedCustomers);
+    } catch (error) {
+      console.error("Failed to delete transaction:", error);
+      alert("Error: Could not delete transaction.");
     }
   }, [authToken]);
 
@@ -344,6 +348,7 @@ const App: React.FC = () => {
             customer={selectedCustomer}
             onAddTransaction={handleAddTransaction}
             onToggleTransactionPaid={handleToggleTransactionPaid}
+            onDeleteTransaction={handleDeleteTransaction}
             onDeselectCustomer={handleDeselectCustomer}
             currentUser={currentUser}
             onLogout={handleLogout}

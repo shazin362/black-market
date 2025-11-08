@@ -6,6 +6,7 @@ interface CustomerDetailProps {
   customer: Customer;
   onAddTransaction: (customerId: string, productName: string, quantity: number, price: number, date: string) => void;
   onToggleTransactionPaid: (customerId: string, transactionId: string) => void;
+  onDeleteTransaction: (customerId: string, transactionId: string) => void;
   onDeselectCustomer: () => void;
   currentUser: string;
   onLogout: () => void;
@@ -14,8 +15,15 @@ interface CustomerDetailProps {
   onDeleteRequest: () => void;
 }
 
-const TransactionItem: React.FC<{ transaction: Transaction; onToggle: () => void }> = ({ transaction, onToggle }) => {
+const TransactionItem: React.FC<{ transaction: Transaction; onToggle: () => void; onDelete: () => void; }> = ({ transaction, onToggle, onDelete }) => {
     const total = transaction.quantity * transaction.amount;
+    
+    const handleDelete = () => {
+        if (window.confirm('Are you sure you want to delete this transaction? This action cannot be undone.')) {
+            onDelete();
+        }
+    };
+
     return (
         <div className={`flex items-start justify-between p-4 rounded-lg transition-colors ${transaction.isPaid ? 'bg-green-50 dark:bg-green-900/20 text-gray-500 dark:text-gray-400' : 'bg-white dark:bg-gray-800/50'}`}>
             <div className="flex-grow">
@@ -24,13 +32,22 @@ const TransactionItem: React.FC<{ transaction: Transaction; onToggle: () => void
                     {transaction.quantity} &times; ₹{transaction.amount.toFixed(2)} = <span className="font-semibold">₹{total.toFixed(2)}</span>
                 </p>
             </div>
-            <button 
-                onClick={onToggle} 
-                className={`p-2 rounded-full transition-transform transform hover:scale-110 ${transaction.isPaid ? 'text-green-500' : 'text-gray-400 hover:text-yellow-500'}`}
-                aria-label={transaction.isPaid ? 'Mark as Unpaid' : 'Mark as Paid'}
-            >
-                {transaction.isPaid ? <XCircleIcon className="w-5 h-5" /> : <CheckCircleIcon className="w-5 h-5" />}
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                    onClick={handleDelete}
+                    className="p-2 rounded-full text-gray-400 hover:text-red-500 transition-colors"
+                    aria-label="Delete Transaction"
+                >
+                    <TrashIcon className="w-5 h-5" />
+                </button>
+                <button 
+                    onClick={onToggle} 
+                    className={`p-2 rounded-full transition-transform transform hover:scale-110 ${transaction.isPaid ? 'text-green-500' : 'text-gray-400 hover:text-yellow-500'}`}
+                    aria-label={transaction.isPaid ? 'Mark as Unpaid' : 'Mark as Paid'}
+                >
+                    {transaction.isPaid ? <XCircleIcon className="w-5 h-5" /> : <CheckCircleIcon className="w-5 h-5" />}
+                </button>
+            </div>
         </div>
     );
 };
@@ -104,7 +121,8 @@ const DateTransactionGroup: React.FC<{
   date: string;
   transactions: Transaction[];
   onToggleTransactionPaid: (transactionId: string) => void;
-}> = ({ date, transactions, onToggleTransactionPaid }) => {
+  onDeleteTransaction: (transactionId: string) => void;
+}> = ({ date, transactions, onToggleTransactionPaid, onDeleteTransaction }) => {
   const [isOpen, setIsOpen] = useState(true);
 
   const dailyTotal = useMemo(() => {
@@ -137,7 +155,8 @@ const DateTransactionGroup: React.FC<{
                     <TransactionItem 
                         key={transaction.id} 
                         transaction={transaction} 
-                        onToggle={() => onToggleTransactionPaid(transaction.id)} 
+                        onToggle={() => onToggleTransactionPaid(transaction.id)}
+                        onDelete={() => onDeleteTransaction(transaction.id)}
                     />
                 ))}
             </div>
@@ -196,7 +215,7 @@ const CustomerActions: React.FC<{ onRename: () => void; onDelete: () => void; }>
   };
 
 
-const CustomerDetail: React.FC<CustomerDetailProps> = ({ customer, onAddTransaction, onToggleTransactionPaid, onDeselectCustomer, currentUser, onLogout, onEditProfile, onRenameRequest, onDeleteRequest }) => {
+const CustomerDetail: React.FC<CustomerDetailProps> = ({ customer, onAddTransaction, onToggleTransactionPaid, onDeleteTransaction, onDeselectCustomer, currentUser, onLogout, onEditProfile, onRenameRequest, onDeleteRequest }) => {
   const [isAdding, setIsAdding] = useState(false);
 
   const stats = useMemo(() => {
@@ -296,6 +315,7 @@ const CustomerDetail: React.FC<CustomerDetailProps> = ({ customer, onAddTransact
                       date={date}
                       transactions={groupedTransactions[date]}
                       onToggleTransactionPaid={(transactionId) => onToggleTransactionPaid(customer.id, transactionId)}
+                      onDeleteTransaction={(transactionId) => onDeleteTransaction(customer.id, transactionId)}
                     />
                   ))}
                 </div>
